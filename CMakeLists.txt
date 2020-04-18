@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 2.8)
+cmake_minimum_required(VERSION 3.15)
 project(libpopcnt
   VERSION 2.3
   LANGUAGES C CXX
