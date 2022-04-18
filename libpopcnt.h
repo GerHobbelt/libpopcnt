@@ -163,10 +163,30 @@ static inline uint64_t popcount64(uint64_t x)
   return (x * h01) >> 56;
 }
 
+static inline uint32_t popcount32(uint32_t x)
+{
+    uint32_t m1  = 0x55555555;
+    uint32_t m2  = 0x33333333;
+    uint32_t m4  = 0x0F0F0F0F;
+    uint32_t h01 = 0x01010101;
+
+    x -= (x >> 1) & m1;
+    x = (x & m2) + ((x >> 2) & m2);
+    x = (x + (x >> 4)) & m4;
+
+    return (x * h01) >> 24;
+}
+
 #if defined(HAVE_ASM_POPCNT) && \
     defined(__x86_64__)
 
 static inline uint64_t popcnt64(uint64_t x)
+{
+  __asm__ ("popcnt %1, %0" : "=r" (x) : "0" (x));
+  return x;
+}
+
+static inline uint32_t popcnt32(uint32_t x)
 {
   __asm__ ("popcnt %1, %0" : "=r" (x) : "0" (x));
   return x;
@@ -197,6 +217,11 @@ static inline uint64_t popcnt64(uint64_t x)
   return _mm_popcnt_u64(x);
 }
 
+static inline uint32_t popcnt32(uint32_t x)
+{
+  return _mm_popcnt_u32(x);
+}
+
 #elif defined(_MSC_VER) && \
       defined(_M_IX86)
 
@@ -208,12 +233,22 @@ static inline uint64_t popcnt64(uint64_t x)
          _mm_popcnt_u32((uint32_t)(x >> 32));
 }
 
+static inline uint32_t popcnt32(uint32_t x)
+{
+  return _mm_popcnt_u32(x);
+}
+
 /* non x86 CPUs */
 #elif defined(HAVE_BUILTIN_POPCOUNT)
 
 static inline uint64_t popcnt64(uint64_t x)
 {
   return __builtin_popcountll(x);
+}
+
+static inline uint32_t popcnt32(uint32_t x)
+{
+  return __builtin_popcountl(x);
 }
 
 /* no hardware POPCNT,
@@ -223,6 +258,11 @@ static inline uint64_t popcnt64(uint64_t x)
 static inline uint64_t popcnt64(uint64_t x)
 {
   return popcount64(x);
+}
+
+static inline uint32_t popcnt32(uint32_t x)
+{
+  return popcount32(x);
 }
 
 #endif
