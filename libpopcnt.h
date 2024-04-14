@@ -572,8 +572,12 @@ static inline uint64_t popcnt(const void* data, uint64_t size)
     /* C++11 thread-safe singleton */
     static const int cpuid = get_cpuid();
   #else
-    static int cpuid_ = -1;
-    int cpuid = cpuid_;
+#if defined(_MSC_VER)
+	  static volatile long cpuid_ = -1;
+#else
+	  static volatile int cpuid_ = -1;
+#endif
+	  int cpuid = cpuid_;
     if (cpuid == -1)
     {
       cpuid = get_cpuid();
