@@ -345,7 +345,7 @@ static inline void run_cpuid(int eax, int ecx, int* abcd)
 #if defined(HAVE_AVX2) || \
     defined(HAVE_AVX512)
 
-static inline uint64_t get_xcr0()
+static inline uint64_t get_xcr0(void)
 {
 #if defined(_MSC_VER)
   return _xgetbv(0);
@@ -360,7 +360,7 @@ static inline uint64_t get_xcr0()
 
 #endif
 
-static inline int get_cpuid()
+static inline int get_cpuid(void)
 {
   int flags = 0;
   int abcd[4];
@@ -589,10 +589,10 @@ static inline uint64_t popcnt(const void* data, uint64_t size)
   #if defined(__AVX512__) || \
      (defined(__AVX512F__) && defined(__AVX512VPOPCNTDQ__))
     /* For tiny arrays AVX512 is not worth it */
-    if (i + 32 <= size)
+    if (i + 48 <= size)
   #else
     if ((cpuid & bit_AVX512_VPOPCNTDQ) &&
-        i + 32 <= size)
+        i + 48 <= size)
   #endif
     {
       const uint64_t* ptr64 = (const uint64_t*)(ptr + i);
@@ -689,6 +689,7 @@ static inline uint64_t popcnt(const void* data, uint64_t size)
 #endif
 }
 
+/* Compile with e.g. -march=armv8-a+sve to enable ARM SVE */
 #elif defined(__ARM_FEATURE_SVE) && \
       __has_include(<arm_sve.h>)
 
@@ -710,19 +711,20 @@ static inline uint64_t popcnt(const void* data, uint64_t size)
   do {
     svuint64_t vec = svld1_u64(pg, &ptr64[i]);
     vec = svcnt_u64_z(pg, vec);
-    vcnt = svadd_u64_z(svptrue_b64(), vcnt, vec);
+    vcnt = svadd_u64_x(svptrue_b64(), vcnt, vec);
     i += svcntd();
     pg = svwhilelt_b64(i, size64);
   }
   while (svptest_any(svptrue_b64(), pg));
 
   uint64_t cnt = svaddv_u64(svptrue_b64(), vcnt);
-  size %= sizeof(uint64_t);
+  uint64_t rem = size % sizeof(uint64_t);
 
-  if (size > 0)
+  if (rem != 0)
   {
     uint64_t val = 0;
-    memcpy(&val, &ptr64[i], size);
+    const uint8_t* ptr8 = (const uint8_t*) data;
+    memcpy(&val, &ptr8[size - rem], rem);
     cnt += popcnt64(val);
   }
 
