@@ -104,8 +104,14 @@
 /* MSVC compatible compilers (Windows) */
 #if defined(X86_OR_X64) && \
     defined(_MSC_VER)
-  /* clang-cl (LLVM 10 from 2020) requires /arch:AVX2 or
-  * /arch:AVX512 to enable vector instructions */
+  /*
+   * There is an LLVM/Clang bug on Windows where function targets
+   * for AVX2 and AVX512 fail to compile unless the user compiles
+   * using the options /arch:AVX2 and /arch:AVX512.
+   * All Clang versions <= 18.0 (from 2024) are affected by this bug.
+   * However, I expect this bug will be fixed in near future:
+   * https://github.com/llvm/llvm-project/issues/53520
+   */
   #if defined(__clang__)
     #if defined(__AVX2__)
       #define HAVE_AVX2
@@ -404,7 +410,7 @@ static inline int get_cpuid()
 
 #include <immintrin.h>
 
-#if !defined(_MSC_VER)
+#if __has_attribute(target)
   __attribute__ ((target ("avx2")))
 #endif
 static inline void CSA256(__m256i* h, __m256i* l, __m256i a, __m256i b, __m256i c)
@@ -414,7 +420,7 @@ static inline void CSA256(__m256i* h, __m256i* l, __m256i a, __m256i b, __m256i 
   *l = _mm256_xor_si256(u, c);
 }
 
-#if !defined(_MSC_VER)
+#if __has_attribute(target)
   __attribute__ ((target ("avx2")))
 #endif
 static inline __m256i popcnt256(__m256i v)
@@ -449,7 +455,7 @@ static inline __m256i popcnt256(__m256i v)
  * Wojciech Mula (23 Nov 2016).
  * @see https://arxiv.org/abs/1611.07612
  */
-#if !defined(_MSC_VER)
+#if __has_attribute(target)
   __attribute__ ((target ("avx2")))
 #endif
 static inline uint64_t popcnt_avx2(const __m256i* ptr, uint64_t size)
@@ -511,7 +517,7 @@ static inline uint64_t popcnt_avx2(const __m256i* ptr, uint64_t size)
 
 #include <immintrin.h>
 
-#if !defined(_MSC_VER)
+#if __has_attribute(target)
   __attribute__ ((target ("avx512f,avx512vpopcntdq")))
 #endif
 static inline uint64_t popcnt_avx512(const uint64_t* ptr, const uint64_t size)

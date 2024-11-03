@@ -14,10 +14,6 @@ possible using specialized CPU instructions i.e.
 ```libpopcnt.h``` has been tested successfully using the GCC,
 Clang and MSVC compilers.
 
-The algorithms used in ```libpopcnt.h``` are described in the paper
-[Faster Population Counts using AVX2 Instructions](https://arxiv.org/abs/1611.07612)
-by Daniel Lemire, Nathan Kurz and Wojciech Mula (23 Nov 2016).
-
 ## C/C++ API
 
 ```C
@@ -29,6 +25,17 @@ by Daniel Lemire, Nathan Kurz and Wojciech Mula (23 Nov 2016).
  * @size: Size of data in bytes
  */
 uint64_t popcnt(const void* data, uint64_t size);
+```
+
+## How to compile
+
+```libpopcnt.h``` does not require any special compiler flags like ```-mavx2```!
+To get the best performance we only recommend to compile with
+optimizations enabled e.g. ```-O3``` or ```-O2```.
+
+```bash
+cc  -O3 program.c
+c++ -O3 program.cpp
 ```
 
 ## How it works
@@ -76,17 +83,6 @@ the following CPU architectures:
 
 For other CPU architectures a fast integer popcount algorithm is used.
 
-## How to compile
-
-```libpopcnt.h``` does not require any special compiler flags like ```-mavx2```!
-In order to get the best performance we recommend however to compile with
-optimizations enabled e.g. ```-O3``` or ```-O2```.
-
-```bash
-cc  -O3 program.c
-c++ -O3 program.cpp
-```
-
 ## Development
 
 ```bash
@@ -109,3 +105,11 @@ Status: 100%
 Seconds: 1.59
 103.4 GB/s
 ```
+
+## Acknowledgments
+
+Some of the algorithms used in ```libpopcnt.h``` are described in the paper
+[Faster Population Counts using AVX2 Instructions](https://arxiv.org/abs/1611.07612)
+by Daniel Lemire, Nathan Kurz and Wojciech Mula (23 Nov 2016). The AVX2 Harley Seal
+popcount algorithm used in ```libpopcnt.h``` has been copied from Wojciech Muła's
+[sse-popcount](https://github.com/WojciechMula/sse-popcount) GitHub repo.
