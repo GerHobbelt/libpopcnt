@@ -33,7 +33,6 @@
 #define LIBPOPCNT_H
 
 #include <stdint.h>
-#include <string.h>
 
 #ifndef __has_builtin
   #define __has_builtin(x) 0
@@ -91,7 +90,7 @@
 
 /* GCC compiler */
 #if defined(LIBPOPCNT_X86_OR_X64) && \
-    LIBPOPCNT_GNUC_PREREQ(4, 9)
+    LIBPOPCNT_GNUC_PREREQ(5, 0)
   #define LIBPOPCNT_HAVE_AVX2
 #endif
 
@@ -99,6 +98,20 @@
 #if defined(LIBPOPCNT_X86_OR_X64) && \
     LIBPOPCNT_GNUC_PREREQ(11, 0)
   #define LIBPOPCNT_HAVE_AVX512
+#endif
+
+/* Clang (Unix-like OSes) */
+#if defined(LIBPOPCNT_X86_OR_X64) && !defined(_MSC_VER)
+  #if LIBPOPCNT_CLANG_PREREQ(3, 8) && \
+      __has_attribute(target) && \
+      (!defined(__apple_build_version__) || __apple_build_version__ >= 8000000)
+    #define LIBPOPCNT_HAVE_AVX2
+  #endif
+  #if LIBPOPCNT_CLANG_PREREQ(9, 0) && \
+      __has_attribute(target) && \
+      (!defined(__apple_build_version__) || __apple_build_version__ >= 8000000)
+    #define LIBPOPCNT_HAVE_AVX512
+  #endif
 #endif
 
 /* MSVC compatible compilers (Windows) */
@@ -128,20 +141,6 @@
   #endif
 #endif
 
-/* Clang (Unix-like OSes) */
-#if defined(LIBPOPCNT_X86_OR_X64) && !defined(_MSC_VER)
-  #if LIBPOPCNT_CLANG_PREREQ(3, 8) && \
-      __has_attribute(target) && \
-      (!defined(__apple_build_version__) || __apple_build_version__ >= 8000000)
-    #define LIBPOPCNT_HAVE_AVX2
-  #endif
-  #if LIBPOPCNT_CLANG_PREREQ(9, 0) && \
-      __has_attribute(target) && \
-      (!defined(__apple_build_version__) || __apple_build_version__ >= 8000000)
-    #define LIBPOPCNT_HAVE_AVX512
-  #endif
-#endif
-
 /*
  * Only enable CPUID runtime checks if this is really
  * needed. E.g. do not enable if user has compiled
@@ -152,7 +151,11 @@
     defined(_MSC_VER) || \
    (LIBPOPCNT_GNUC_PREREQ(4, 2) || \
     __has_builtin(__sync_val_compare_and_swap))) && \
-   ((defined(LIBPOPCNT_HAVE_AVX512) && !(defined(__AVX512__) || (defined(__AVX512F__) && defined(__AVX512VPOPCNTDQ__)))) || \
+   ((defined(LIBPOPCNT_HAVE_AVX512) && !(defined(__AVX512__) || \
+                                        (defined(__AVX512F__) && \
+                                         defined(__AVX512BW__) && \
+                                         defined(__AVX512VPOPCNTDQ__) && \
+                                         defined(__AVX512BITALG__)))) || \
     (defined(LIBPOPCNT_HAVE_AVX2) && !defined(__AVX2__)) || \
     (defined(LIBPOPCNT_HAVE_POPCNT) && !defined(__POPCNT__)))
   #define LIBPOPCNT_HAVE_CPUID
@@ -297,12 +300,14 @@ static inline uint32_t popcnt32(uint32_t x)
 /* https://en.wikipedia.org/wiki/CPUID */
 
 /* %ebx bit flags */
-#define LIBPOPCNT_BIT_AVX2    (1 << 5)
-#define LIBPOPCNT_BIT_AVX512F (1 << 16)
+#define LIBPOPCNT_BIT_AVX2     (1 << 5)
+#define LIBPOPCNT_BIT_AVX512F  (1 << 16)
+#define LIBPOPCNT_BIT_AVX512BW (1 << 30)
 
 /* %ecx bit flags */
-#define LIBPOPCNT_BIT_POPCNT (1 << 23)
+#define LIBPOPCNT_BIT_AVX512_BITALG    (1 << 12)
 #define LIBPOPCNT_BIT_AVX512_VPOPCNTDQ (1 << 14)
+#define LIBPOPCNT_BIT_POPCNT           (1 << 23)
 
 /* xgetbv bit flags */
 #define LIBPOPCNT_XSTATE_SSE (1 << 1)
@@ -392,8 +397,12 @@ static inline int get_cpuid(void)
 
     if ((xcr0 & zmm_mask) == zmm_mask)
     {
+      /* If all AVX512 features required by our popcnt_avx512() are supported */
+      /* then we add LIBPOPCNT_BIT_AVX512_VPOPCNTDQ to our CPUID flags. */
       if ((abcd[1] & LIBPOPCNT_BIT_AVX512F) == LIBPOPCNT_BIT_AVX512F &&
-          (abcd[2] & LIBPOPCNT_BIT_AVX512_VPOPCNTDQ) == LIBPOPCNT_BIT_AVX512_VPOPCNTDQ)
+          (abcd[1] & LIBPOPCNT_BIT_AVX512BW) == LIBPOPCNT_BIT_AVX512BW &&
+          (abcd[2] & LIBPOPCNT_BIT_AVX512_VPOPCNTDQ) == LIBPOPCNT_BIT_AVX512_VPOPCNTDQ &&
+          (abcd[2] & LIBPOPCNT_BIT_AVX512_BITALG) == LIBPOPCNT_BIT_AVX512_BITALG)
         flags |= LIBPOPCNT_BIT_AVX512_VPOPCNTDQ;
     }
   }
@@ -518,24 +527,61 @@ static inline uint64_t popcnt_avx2(const __m256i* ptr, uint64_t size)
 #include <immintrin.h>
 
 #if __has_attribute(target)
-  __attribute__ ((target ("avx512f,avx512vpopcntdq")))
+  __attribute__ ((target ("avx512f,avx512bw,avx512vpopcntdq,avx512bitalg")))
 #endif
-static inline uint64_t popcnt_avx512(const uint64_t* ptr, const uint64_t size)
+static inline uint64_t popcnt_avx512(const uint8_t* ptr8, uint64_t size)
 {
     __m512i cnt = _mm512_setzero_si512();
+    const uint64_t* ptr64 = (const uint64_t*) ptr8;
+    uint64_t size64 = size / sizeof(uint64_t);
     uint64_t i = 0;
 
-    for (; i + 8 < size; i += 8)
+    for (; i + 32 <= size64; i += 32)
     {
-      __m512i vec = _mm512_loadu_epi64(&ptr[i]);
+      __m512i vec0 = _mm512_loadu_epi64(&ptr64[i + 0]);
+      __m512i vec1 = _mm512_loadu_epi64(&ptr64[i + 8]);
+      __m512i vec2 = _mm512_loadu_epi64(&ptr64[i + 16]);
+      __m512i vec3 = _mm512_loadu_epi64(&ptr64[i + 24]);
+
+      vec0 = _mm512_popcnt_epi64(vec0);
+      vec1 = _mm512_popcnt_epi64(vec1);
+      vec2 = _mm512_popcnt_epi64(vec2);
+      vec3 = _mm512_popcnt_epi64(vec3);
+
+      cnt = _mm512_add_epi64(cnt, vec0);
+      cnt = _mm512_add_epi64(cnt, vec1);
+      cnt = _mm512_add_epi64(cnt, vec2);
+      cnt = _mm512_add_epi64(cnt, vec3);
+    }
+
+    for (; i + 8 <= size64; i += 8)
+    {
+      __m512i vec = _mm512_loadu_epi64(&ptr64[i]);
       vec = _mm512_popcnt_epi64(vec);
       cnt = _mm512_add_epi64(cnt, vec);
     }
 
-    __mmask8 mask = (__mmask8) (0xff >> (i + 8 - size));
-    __m512i vec = _mm512_maskz_loadu_epi64(mask , &ptr[i]);
-    vec = _mm512_popcnt_epi64(vec);
-    cnt = _mm512_add_epi64(cnt, vec);
+    /* Process last 64 bytes */
+    if (i < size64)
+    {
+      __mmask8 mask = (__mmask8) (0xff >> (i + 8 - size64));
+      __m512i vec = _mm512_maskz_loadu_epi64(mask , &ptr64[i]);
+      vec = _mm512_popcnt_epi64(vec);
+      cnt = _mm512_add_epi64(cnt, vec);
+    }
+
+    uint64_t bytes = size % sizeof(uint64_t);
+
+    /* Process last 8 bytes */
+    if (bytes != 0)
+    {
+      i = size - bytes;
+      __mmask64 mask = (__mmask64) (0xff >> (i + 8 - size));
+      __m512i vec = _mm512_maskz_loadu_epi8(mask, &ptr8[i]);
+      __m512i cnt8 = _mm512_popcnt_epi8(vec);
+      cnt8 = _mm512_sad_epu8(cnt8, _mm512_setzero_si512());
+      cnt = _mm512_add_epi64(cnt, cnt8);
+    }
 
     return _mm512_reduce_add_epi64(cnt);
 }
@@ -550,12 +596,8 @@ static inline uint64_t popcnt_avx512(const uint64_t* ptr, const uint64_t size)
  * @data: An array
  * @size: Size of data in bytes
  */
-static inline uint64_t popcnt(const void* data, uint64_t size)
+static uint64_t popcnt(const void* data, uint64_t size)
 {
-  uint64_t i = 0;
-  uint64_t cnt = 0;
-  const uint8_t* ptr = (const uint8_t*) data;
-
 /*
  * CPUID runtime checks are only enabled if this is needed.
  * E.g. CPUID is disabled when a user compiles his
@@ -585,20 +627,23 @@ static inline uint64_t popcnt(const void* data, uint64_t size)
   #endif
 #endif
 
+  const uint8_t* ptr = (const uint8_t*) data;
+  uint64_t cnt = 0;
+  uint64_t i = 0;
+
 #if defined(LIBPOPCNT_HAVE_AVX512)
   #if defined(__AVX512__) || \
-     (defined(__AVX512F__) && defined(__AVX512VPOPCNTDQ__))
+     (defined(__AVX512F__) && \
+      defined(__AVX512BW__) && \
+      defined(__AVX512VPOPCNTDQ__) && \
+      defined(__AVX512BITALG__))
     /* For tiny arrays AVX512 is not worth it */
     if (i + 48 <= size)
   #else
     if ((cpuid & LIBPOPCNT_BIT_AVX512_VPOPCNTDQ) &&
         i + 48 <= size)
   #endif
-    {
-      const uint64_t* ptr64 = (const uint64_t*)(ptr + i);
-      cnt += popcnt_avx512(ptr64, (size - i) / 8);
-      i = size - size % 8;
-    }
+      return popcnt_avx512(ptr, size);
 #endif
 
 #if defined(LIBPOPCNT_HAVE_AVX2)
@@ -627,26 +672,33 @@ static inline uint64_t popcnt(const void* data, uint64_t size)
     if (cpuid & LIBPOPCNT_BIT_POPCNT)
   #endif
     {
-      uintptr_t rem8 = ((uintptr_t) &ptr[i]) % 8;
-
-      /* Align &ptr[i] to an 8 byte boundary */
-      if (rem8 != 0)
+      if (i + 8 <= size)
       {
-        uint64_t val = 0;
-        size_t bytes = (size_t) (8 - rem8 % 8);
-        memcpy(&val, &ptr[i], bytes);
-        cnt += popcnt64(val);
-        i += bytes;
+        uintptr_t rem = ((uintptr_t) &ptr[i]) % 8;
+
+        /* Align &ptr[i] to an 8 byte boundary */
+        if (rem != 0)
+        {
+          uint64_t val = 0;
+          uint64_t bytes = (uint64_t) (8 - rem % 8);
+          bytes = (bytes <= 7) ? bytes : 7;
+          for (uint64_t j = 0; j < bytes; j++)
+            val |= ((uint64_t) ptr[i + j]) << (j * 8);
+          cnt += popcnt64(val);
+          i += bytes;
+        }
       }
 
-      for (; i < size - size % 8; i += 8)
+      for (; i + 8 <= size; i += 8)
         cnt += popcnt64(*(const uint64_t*)(ptr + i));
 
       if (i < size)
       {
         uint64_t val = 0;
-        size_t bytes = (size_t)(size - i);
-        memcpy(&val, &ptr[i], bytes);
+        uint64_t bytes = (uint64_t) (size - i);
+        bytes = (bytes <= 7) ? bytes : 7;
+        for (uint64_t j = 0; j < bytes; j++)
+          val |= ((uint64_t) ptr[i + j]) << (j * 8);
         cnt += popcnt64(val);
       }
 
@@ -662,26 +714,33 @@ static inline uint64_t popcnt(const void* data, uint64_t size)
 #if !defined(LIBPOPCNT_HAVE_POPCNT) || \
     !defined(__POPCNT__)
 
-  uintptr_t rem8 = ((uintptr_t) &ptr[i]) % 8;
-
-  /* Align &ptr[i] to an 8 byte boundary */
-  if (rem8 != 0)
+  if (i + 8 <= size)
   {
-    uint64_t val = 0;
-    size_t bytes = (size_t) (8 - rem8 % 8);
-    memcpy(&val, &ptr[i], bytes);
-    cnt += popcnt64_bitwise(val);
-    i += bytes;
+    uintptr_t rem = ((uintptr_t) &ptr[i]) % 8;
+
+    /* Align &ptr[i] to an 8 byte boundary */
+    if (rem != 0)
+    {
+      uint64_t val = 0;
+      uint64_t bytes = (uint64_t) (8 - rem % 8);
+      bytes = (bytes <= 7) ? bytes : 7;
+      for (uint64_t j = 0; j < bytes; j++)
+        val |= ((uint64_t) ptr[i + j]) << (j * 8);
+      cnt += popcnt64_bitwise(val);
+      i += bytes;
+    }
   }
 
-  for (; i < size - size % 8; i += 8)
+  for (; i + 8 <= size; i += 8)
     cnt += popcnt64_bitwise(*(const uint64_t*)(ptr + i));
 
   if (i < size)
   {
     uint64_t val = 0;
-    size_t bytes = (size_t)(size - i);
-    memcpy(&val, &ptr[i], bytes);
+    uint64_t bytes = (uint64_t) (size - i);
+    bytes = (bytes <= 7) ? bytes : 7;
+    for (uint64_t j = 0; j < bytes; j++)
+      val |= ((uint64_t) ptr[i + j]) << (j * 8);
     cnt += popcnt64_bitwise(val);
   }
 
@@ -705,34 +764,56 @@ static inline uint64_t popcnt(const void* data, uint64_t size)
   uint64_t i = 0;
   const uint64_t* ptr64 = (const uint64_t*) data;
   uint64_t size64 = size / sizeof(uint64_t);
-  svbool_t pg = svwhilelt_b64(i, size64);
   svuint64_t vcnt = svdup_u64(0);
 
-  do {
+  for (; i + svcntd() * 4 <= size64; i += svcntd() * 4)
+  {
+    svuint64_t vec0 = svld1_u64(svptrue_b64(), &ptr64[i + svcntd() * 0]);
+    svuint64_t vec1 = svld1_u64(svptrue_b64(), &ptr64[i + svcntd() * 1]);
+    svuint64_t vec2 = svld1_u64(svptrue_b64(), &ptr64[i + svcntd() * 2]);
+    svuint64_t vec3 = svld1_u64(svptrue_b64(), &ptr64[i + svcntd() * 3]);
+
+    vec0 = svcnt_u64_x(svptrue_b64(), vec0);
+    vec1 = svcnt_u64_x(svptrue_b64(), vec1);
+    vec2 = svcnt_u64_x(svptrue_b64(), vec2);
+    vec3 = svcnt_u64_x(svptrue_b64(), vec3);
+
+    vcnt = svadd_u64_x(svptrue_b64(), vcnt, vec0);
+    vcnt = svadd_u64_x(svptrue_b64(), vcnt, vec1);
+    vcnt = svadd_u64_x(svptrue_b64(), vcnt, vec2);
+    vcnt = svadd_u64_x(svptrue_b64(), vcnt, vec3);
+  }
+
+  svbool_t pg = svwhilelt_b64(i, size64);
+
+  while (svptest_any(svptrue_b64(), pg))
+  {
     svuint64_t vec = svld1_u64(pg, &ptr64[i]);
     vec = svcnt_u64_z(pg, vec);
     vcnt = svadd_u64_x(svptrue_b64(), vcnt, vec);
     i += svcntd();
     pg = svwhilelt_b64(i, size64);
   }
-  while (svptest_any(svptrue_b64(), pg));
 
   uint64_t cnt = svaddv_u64(svptrue_b64(), vcnt);
-  uint64_t rem = size % sizeof(uint64_t);
+  uint64_t bytes = size % sizeof(uint64_t);
 
-  if (rem != 0)
+  if (bytes != 0)
   {
-    uint64_t val = 0;
+    i = size - bytes;
     const uint8_t* ptr8 = (const uint8_t*) data;
-    memcpy(&val, &ptr8[size - rem], rem);
-    cnt += popcnt64(val);
+    svbool_t pg8 = svwhilelt_b8(i, size);
+    svuint8_t vec = svld1_u8(pg8, &ptr8[i]);
+    svuint8_t vcnt8 = svcnt_u8_z(pg8, vec);
+    cnt += svaddv_u8(pg8, vcnt8);
   }
 
   return cnt;
 }
 
 #elif (defined(__ARM_NEON) || \
-       defined(__aarch64__)) && \
+       defined(__aarch64__) || \
+       defined(_M_ARM64)) && \
       __has_include(<arm_neon.h>)
 
 #include <arm_neon.h>
@@ -803,26 +884,33 @@ static inline uint64_t popcnt(const void* data, uint64_t size)
     cnt += tmp[1];
   }
 
-  uintptr_t rem8 = ((uintptr_t) &ptr[i]) % 8;
-
-  /* Align &ptr[i] to an 8 byte boundary */
-  if (rem8 != 0)
+  if (i + 8 <= size)
   {
-    uint64_t val = 0;
-    size_t bytes = (size_t) (8 - rem8 % 8);
-    memcpy(&val, &ptr[i], bytes);
-    cnt += popcnt64(val);
-    i += bytes;
+    uintptr_t rem = ((uintptr_t) &ptr[i]) % 8;
+
+    /* Align &ptr[i] to an 8 byte boundary */
+    if (rem != 0)
+    {
+      uint64_t val = 0;
+      uint64_t bytes = (uint64_t) (8 - rem % 8);
+      bytes = (bytes <= 7) ? bytes : 7;
+      for (uint64_t j = 0; j < bytes; j++)
+        val |= ((uint64_t) ptr[i + j]) << (j * 8);
+      cnt += popcnt64(val);
+      i += bytes;
+    }
   }
 
-  for (; i < size - size % 8; i += 8)
+  for (; i + 8 <= size; i += 8)
     cnt += popcnt64(*(const uint64_t*)(ptr + i));
 
   if (i < size)
   {
     uint64_t val = 0;
-    size_t bytes = (size_t)(size - i);
-    memcpy(&val, &ptr[i], bytes);
+    uint64_t bytes = (uint64_t) (size - i);
+    bytes = (bytes <= 7) ? bytes : 7;
+    for (uint64_t j = 0; j < bytes; j++)
+      val |= ((uint64_t) ptr[i + j]) << (j * 8);
     cnt += popcnt64(val);
   }
 
@@ -842,26 +930,34 @@ static inline uint64_t popcnt(const void* data, uint64_t size)
   uint64_t i = 0;
   uint64_t cnt = 0;
   const uint8_t* ptr = (const uint8_t*) data;
-  uintptr_t rem8 = ((uintptr_t) &ptr[i]) % 8;
 
-  /* Align &ptr[i] to an 8 byte boundary */
-  if (rem8 != 0)
+  if (i + 8 <= size)
   {
-    uint64_t val = 0;
-    size_t bytes = (size_t) (8 - rem8 % 8);
-    memcpy(&val, &ptr[i], bytes);
-    cnt += popcnt64(val);
-    i += bytes;
+    uintptr_t rem = ((uintptr_t) &ptr[i]) % 8;
+
+    /* Align &ptr[i] to an 8 byte boundary */
+    if (rem != 0)
+    {
+      uint64_t val = 0;
+      uint64_t bytes = (uint64_t) (8 - rem % 8);
+      bytes = (bytes <= 7) ? bytes : 7;
+      for (uint64_t j = 0; j < bytes; j++)
+        val |= ((uint64_t) ptr[i + j]) << (j * 8);
+      cnt += popcnt64(val);
+      i += bytes;
+    }
   }
 
-  for (; i < size - size % 8; i += 8)
+  for (; i + 8 <= size; i += 8)
     cnt += popcnt64(*(const uint64_t*)(ptr + i));
 
   if (i < size)
   {
     uint64_t val = 0;
-    size_t bytes = (size_t)(size - i);
-    memcpy(&val, &ptr[i], bytes);
+    uint64_t bytes = (uint64_t) (size - i);
+    bytes = (bytes <= 7) ? bytes : 7;
+    for (uint64_t j = 0; j < bytes; j++)
+      val |= ((uint64_t) ptr[i + j]) << (j * 8);
     cnt += popcnt64(val);
   }
 
