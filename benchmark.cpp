@@ -21,13 +21,13 @@
 #include <stdint.h>
 #include <string>
 
-double get_seconds()
+static double get_seconds(void)
 {
   return (double) std::clock() / CLOCKS_PER_SEC;
 }
 
 // init vector with random data
-void init(std::vector<uint8_t>& vect)
+static void init(std::vector<uint8_t>& vect)
 {
   std::srand((unsigned) std::time(0));
 
@@ -36,7 +36,7 @@ void init(std::vector<uint8_t>& vect)
 }
 
 // count 1 bits inside vector
-uint64_t benchmark(const std::vector<uint8_t>& vect, int iters)
+static uint64_t benchmark(const std::vector<uint8_t>& vect, int iters)
 {
   uint64_t total = 0;
   int old = - 1;
@@ -55,7 +55,7 @@ uint64_t benchmark(const std::vector<uint8_t>& vect, int iters)
   return total;
 }
 
-void verify(uint64_t cnt, uint64_t total, int iters)
+static void verify(uint64_t cnt, uint64_t total, int iters)
 {
   if (cnt != total / iters)
   {
@@ -64,7 +64,12 @@ void verify(uint64_t cnt, uint64_t total, int iters)
   }
 }
 
-int main(int argc, char* argv[])
+#if defined(BUILD_MONOLITHIC)
+#define main  popcnt_benchmark_main
+#endif
+
+extern "C"
+int main(int argc, const char** argv)
 {
   int bytes = (1 << 10) * 16;
   int iters = 10000000;

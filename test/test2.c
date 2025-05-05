@@ -26,7 +26,7 @@
  * @size: size of data
  * @i: Array start index
  */
-void test(uint8_t* data,
+static void test(uint8_t* data,
           size_t size,
           size_t i)
 {
@@ -43,6 +43,10 @@ void test(uint8_t* data,
     exit(1);
   }
 }
+
+#if defined(BUILD_MONOLITHIC)
+#define main  popcnt_test2_main
+#endif
 
 int main(void)
 {

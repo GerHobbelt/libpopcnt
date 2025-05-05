@@ -27,7 +27,7 @@ using namespace std;
 /// @data: An array for testing
 /// @i: Array start index
 ///
-void test(vector<uint8_t>& data, size_t i)
+static void test(vector<uint8_t>& data, size_t i)
 {
   size_t size = data.size();
 
@@ -45,7 +45,12 @@ void test(vector<uint8_t>& data, size_t i)
   }
 }
 
-int main(int argc, char* argv[])
+#if defined(BUILD_MONOLITHIC)
+#define main  popcnt_test1_main
+#endif
+
+extern "C"
+int main(int argc, const char** argv)
 {
   size_t size = 100000;
 
